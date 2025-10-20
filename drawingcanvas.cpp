@@ -1,98 +1,165 @@
 #include "drawingcanvas.h"
+#include <QDebug>
+#include <QColor>
+#include <iostream>
 
-DrawingCanvas::DrawingCanvas(QWidget *parent)  {
-    // Set a minimum size for the canvas
-    setMinimumSize(this->WINDOW_WIDTH, this->WINDOW_HEIGHT);
-    // Set a solid background color
+using namespace std;
+
+DrawingCanvas::DrawingCanvas(QWidget *parent)
+    : QWidget(parent)
+{
+    setMinimumSize(this->MIN_WINDOW_WIDTH, this->MIN_WINDOW_HEIGHT);
     setStyleSheet("background-color: white; border: 1px solid gray;");
 }
 
-void DrawingCanvas::clearPoints(){
+void DrawingCanvas::clearPoints() {
     m_points.clear();
-    // Trigger a repaint to clear the canvas
+    m_candidateRegions.clear();
     update();
 }
 
-void DrawingCanvas::paintLines(){
-    /* Todo
-     * Implement lines drawing per even pair
-    */
-
+void DrawingCanvas::paintLines() {
+    cout << "[INFO] Paint lines dipanggil" << endl;
     isPaintLinesClicked = true;
     update();
 }
 
-void DrawingCanvas::segmentDetection(){
-    QPixmap pixmap = this->grab(); //
-    QImage image = pixmap.toImage();
+bool DrawingCanvas::isWindowNonEmpty(const QImage& window, int& nonWhiteCount) {
+    nonWhiteCount = 0;
+    const int NON_EMPTY_THRESHOLD = 5;
 
-    cout << "image width " << image.width() << endl;
-    cout << "image height " << image.height() << endl;
-
-    //To not crash we set initial size of the matrix
-    vector<CustomMatrix> windows(image.width()*image.height());
-
-    // Get the pixel value as an ARGB integer (QRgb is a typedef for unsigned int)
-    for(int i = 1; i < image.width()-1;i++){
-        for(int j = 1; j < image.height()-1;j++){
-            bool local_window[3][3] = {false};
-
-            for(int m=-1;m<=1;m++){
-                for(int n=-1;n<=1;n++){
-                    QRgb rgbValue = image.pixel(i+m, j+n);
-                    local_window[m+1][n+1] = (rgbValue != 0xffffffff);
-                }
+    for (int y = 0; y < window.height(); ++y) {
+        for (int x = 0; x < window.width(); ++x) {
+            if (window.pixel(x, y) != 0xffffffff) {
+                nonWhiteCount++;
+                if (nonWhiteCount > NON_EMPTY_THRESHOLD)
+                    return true;
             }
-
-            CustomMatrix mat(local_window);
-
-            windows.push_back(mat);
         }
     }
-    return;
+    return nonWhiteCount > NON_EMPTY_THRESHOLD;
 }
 
-void DrawingCanvas::paintEvent(QPaintEvent *event){
+bool DrawingCanvas::checkSegmentPattern(const QImage& window) {
+    int nonWhiteCount = 0;
+    isWindowNonEmpty(window, nonWhiteCount);
+
+    const int TOTAL_DENSITY_THRESHOLD = 5;
+    if (nonWhiteCount <= TOTAL_DENSITY_THRESHOLD)
+        return false;
+
+    int center_pixels = 0;
+    int w = window.width();
+    int h = window.height();
+
+    int start_x = w / 4;
+    int end_x = 3 * w / 4;
+    int start_y = h / 4;
+    int end_y = 3 * h / 4;
+
+    for (int y = start_y; y < end_y; ++y) {
+        for (int x = start_x; x < end_x; ++x) {
+            if (window.pixel(x, y) != 0xffffffff)
+                center_pixels++;
+        }
+    }
+
+    const int CENTER_DENSITY_THRESHOLD = 3;
+    return (center_pixels >= CENTER_DENSITY_THRESHOLD);
+}
+
+void DrawingCanvas::segmentDetection() {
+    m_candidateRegions.clear();
+
+    QPixmap pixmap = this->grab();
+    QImage image = pixmap.toImage();
+
+    cout << "[DEBUG] Image W=" << image.width()
+         << ", H=" << image.height() << endl;
+
+    const int WINDOW_SIZE = 50;
+    const int STEP_SIZE = 5;
+    int windowCount = 0;
+
+    qDebug() << "Mulai analisis window (size:" << WINDOW_SIZE
+             << ", step:" << STEP_SIZE << ")";
+
+    for (int y = 0; y <= image.height() - WINDOW_SIZE; y += STEP_SIZE) {
+        for (int x = 0; x <= image.width() - WINDOW_SIZE; x += STEP_SIZE) {
+
+            QRect windowRect(x, y, WINDOW_SIZE, WINDOW_SIZE);
+            QImage window = image.copy(windowRect);
+
+            int nonWhiteCount = 0;
+            if (isWindowNonEmpty(window, nonWhiteCount)) {
+                windowCount++;
+
+                if (windowCount % 50 == 0) {
+                    qDebug() << "Cek Window ke-" << windowCount
+                             << " di (" << x << "," << y << ")";
+                }
+
+                if (checkSegmentPattern(window)) {
+                    m_candidateRegions.append(windowRect);
+                }
+            }
+        }
+    }
+
+    qDebug() << "[INFO] Analisis selesai. Total kandidat terdeteksi:"
+             << m_candidateRegions.size();
+
+    update();
+}
+
+void DrawingCanvas::paintEvent(QPaintEvent *event) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // Set up the pen and brush for drawing the points
     QPen pen(Qt::blue, 5);
     painter.setPen(pen);
-    painter.setBrush(QBrush(Qt::blue));
+    painter.setBrush(Qt::blue);
 
-    // Draw a small circle at each stored point
+    // Titik-titik yang digambar
     for (const QPoint& point : std::as_const(m_points)) {
         painter.drawEllipse(point, 3, 3);
     }
 
-    if(isPaintLinesClicked){
-        cout << "paint lines block is called" << endl;
+    // Jika tombol "Draw Lines" diklik
+    if (isPaintLinesClicked) {
         pen.setColor(Qt::red);
-        pen.setWidth(4); // 4-pixel wide line
-        pen.setStyle(Qt::SolidLine);
+        pen.setWidth(3);
         painter.setPen(pen);
 
-        // Set the painter's pen to our custom pen.
-        painter.setPen(pen);
-
-        for(int i=0;i<m_points.size()-1;i+=2){
-            //cout << m_points[i].x() << endl;
-            painter.drawLine(m_points[i], m_points[i+1]);
+        for (int i = 0; i + 1 < m_points.size(); i += 2) {
+            painter.drawLine(m_points[i], m_points[i + 1]);
         }
-        isPaintLinesClicked = false;
 
-        //return painter pen to blue
+        isPaintLinesClicked = false;
         pen.setColor(Qt::blue);
         painter.setPen(pen);
+    }
+
+    if (!m_candidateRegions.isEmpty()) {
+        QPen rectPen(QColor(170, 0, 255), 2, Qt::DashLine);
+        painter.setPen(rectPen);
+        painter.setBrush(Qt::NoBrush);
+
+        for (const QRect &rect : m_candidateRegions) {
+            painter.drawRect(rect);
+        }
+
+        painter.setPen(Qt::darkMagenta);
+        painter.drawText(10, 20,
+                         QString("Kandidat terdeteksi: %1")
+                             .arg(m_candidateRegions.size()));
     }
 }
 
 void DrawingCanvas::mousePressEvent(QMouseEvent *event) {
-    // Add the mouse click position to our vector of points
     m_points.append(event->pos());
-    // Trigger a repaint
     update();
 }
+
 
 
