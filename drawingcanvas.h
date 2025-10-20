@@ -6,41 +6,37 @@
 #include <QPoint>
 #include <QPainter>
 #include <QMouseEvent>
+#include <QPixmap>
 #include <iostream>
 #include <iomanip>
-#include <QPixmap>
-#include "CustomMatrix.h"
 
 using namespace std;
-using Array3x3 = std::array<std::array<bool, 3>, 3>;
 
-
-class DrawingCanvas : public QWidget
-{
+class DrawingCanvas : public QWidget {
     Q_OBJECT
+
 private:
-    const int WINDOW_WIDTH=600;
-    const int WINDOW_HEIGHT=400;
+    const int MIN_WINDOW_WIDTH = 600;
+    const int MIN_WINDOW_HEIGHT = 400;
+
+    QVector<QPoint> m_points;
+    QList<QRect> m_candidateRegions;
+    bool isPaintLinesClicked = false;
+
+    bool isWindowNonEmpty(const QImage& window, int& nonWhiteCount);
+    bool checkSegmentPattern(const QImage& window);
 
 public:
     explicit DrawingCanvas(QWidget *parent = nullptr);
 
-    // Slot to clear all points from the canvas
     void clearPoints();
     void paintLines();
     void segmentDetection();
 
 protected:
-    // Overridden method to handle painting on the widget
     void paintEvent(QPaintEvent *event) override;
-
-    // Overridden method to handle mouse clicks
     void mousePressEvent(QMouseEvent *event) override;
-
-private:
-    // A vector to store all the points drawn by the user
-    QVector<QPoint> m_points;
-
-    bool isPaintLinesClicked = false;
 };
+
 #endif // DRAWINGCANVAS_H
+
